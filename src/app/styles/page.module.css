@@ -1,0 +1,121 @@
+.main {
+  padding: 2rem;
+  font-family: sans-serif;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.title {
+  margin-bottom: 0.5rem;
+}
+
+.description {
+  color: #666;
+  margin-bottom: 2rem;
+}
+
+.filtersContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filterLabel {
+  font-weight: bold;
+}
+
+.textInput {
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 200px;
+  font-size: 1rem;
+}
+
+.textInput:focus {
+  outline: none;
+  border-color: #0070f3;
+  box-shadow: 0 0 0 2px rgba(0, 112, 243, 0.2);
+}
+
+.buttonGroup {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.toggleButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggleButton:hover {
+  border-color: #0070f3;
+}
+
+.toggleButtonActive {
+  background: #0070f3;
+  color: #fff;
+  border-color: #0070f3;
+}
+
+.clearButton {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clearButton:hover {
+  background: #e5e5e5;
+}
+
+.stateCard {
+  margin-top: 2rem;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 8px;
+}
+
+.stateCard h2 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.stateCode {
+  background: #fff;
+  padding: 1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.infoCard {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #e8f4ff;
+  border-radius: 8px;
+}
+
+.infoCard h2 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
+
+.infoCard p {
+  font-size: 0.9rem;
+  color: #666;
+  margin: 0;
+}
