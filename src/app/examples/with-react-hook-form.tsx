@@ -1,18 +1,107 @@
 "use client";
 
 /**
- * useFilters + react-hook-form 統合サンプル
+ * useUrlForm - nuqs + react-hook-form 汎用統合フック
  *
- * 既存のreact-hook-formベースのUIコンポーネントをそのまま使いつつ、
- * フィルター状態をURLに同期する実装例
+ * シンプルなアプローチ:
+ * - URLの状態をreact-hook-formの初期値として使用
+ * - 検索ボタン押下時にURLを更新
  */
 
-import { useEffect, useMemo, useCallback } from "react";
-import { useForm } from "react-hook-form";
-import { useFilters, type FilterSchema } from "../hooks/useFilters";
+import { useForm, Controller, type DefaultValues } from "react-hook-form";
+import {
+  useFilters,
+  type FilterSchema,
+  type InferState,
+} from "../hooks/useFilters";
 
 // =============================================================================
-// 1. 型定義
+// 1. 汎用 useUrlForm フック
+// =============================================================================
+
+/**
+ * フォームの値をURL用の値に変換する型
+ * - 空文字列 → null
+ * - その他 → そのまま
+ */
+type ToUrlValue<T> = T extends string ? T | null : T;
+type ToUrlParams<T> = { [K in keyof T]: ToUrlValue<T[K]> };
+
+/**
+ * nuqsとreact-hook-formを統合する汎用フック
+ *
+ * @param schema - nuqsのフィルタースキーマ
+ * @param defaultValues - フォームのデフォルト値（URLに値がない場合に使用）
+ *
+ * @example
+ * const { form, search, clearFilters } = useUrlForm(
+ *   { keyword: { type: "string" }, status: { type: "stringLiteral", options: STATUSES } },
+ *   { keyword: "", status: "PENDING" }
+ * );
+ */
+export const useUrlForm = <
+  S extends FilterSchema,
+  T extends Record<string, unknown>,
+>(
+  schema: S,
+  defaultValues: T & DefaultValues<T>
+) => {
+  const { filters, setFilters } = useFilters(schema);
+
+  // URLの値とデフォルト値をマージして初期値を作成
+  const initialValues = Object.keys(defaultValues).reduce(
+    (acc, key) => {
+      const urlValue = filters[key];
+      const defaultValue = defaultValues[key];
+
+      // URLに値があればそれを使用、なければデフォルト値
+      if (Array.isArray(defaultValue)) {
+        // 配列の場合: URLの配列が空でなければ使用
+        acc[key] = (urlValue as unknown[])?.length > 0 ? urlValue : defaultValue;
+      } else {
+        // スカラーの場合: URLの値がnullでなければ使用
+        acc[key] = urlValue ?? defaultValue;
+      }
+      return acc;
+    },
+    {} as Record<string, unknown>
+  ) as T;
+
+  const form = useForm<T>({ defaultValues: initialValues as DefaultValues<T> });
+
+  // 検索実行: フォームの値をURLに反映
+  const search = form.handleSubmit((data) => {
+    const urlParams = Object.keys(data).reduce(
+      (acc, key) => {
+        const value = data[key];
+        // 空文字列はnullに変換（URLから削除）
+        acc[key] = value === "" ? null : value;
+        return acc;
+      },
+      {} as Record<string, unknown>
+    );
+    setFilters(urlParams as Partial<InferState<S>>);
+  });
+
+  // フィルターをクリア
+  const clearFilters = () => {
+    form.reset(defaultValues);
+    const urlParams = Object.keys(defaultValues).reduce(
+      (acc, key) => {
+        const value = defaultValues[key];
+        acc[key] = value === "" ? null : value;
+        return acc;
+      },
+      {} as Record<string, unknown>
+    );
+    setFilters(urlParams as Partial<InferState<S>>);
+  };
+
+  return { form, search, clearFilters, filters };
+};
+
+// =============================================================================
+// 2. 使用例: 検索フォーム
 // =============================================================================
 
 export const STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const;
@@ -23,20 +112,7 @@ type Status = (typeof STATUSES)[number];
 type Category = (typeof CATEGORIES)[number];
 type DateType = (typeof DATE_TYPES)[number];
 
-// react-hook-form用のフォーム型
-interface SearchFormValues {
-  keyword: string;
-  dateFrom: string;
-  dateTo: string;
-  dateType: DateType;
-  statuses: Status[];
-  categories: Category[];
-}
-
-// =============================================================================
-// 2. フィルタースキーマ定義
-// =============================================================================
-
+// フィルタースキーマ
 const searchFilterSchema = {
   keyword: { type: "string" },
   dateFrom: { type: "string" },
@@ -46,139 +122,25 @@ const searchFilterSchema = {
   categories: { type: "stringLiteralArray", options: CATEGORIES },
 } as const satisfies FilterSchema;
 
-// =============================================================================
-// 3. useFilters + react-hook-form 統合フック
-// =============================================================================
+// フォームの型
+interface SearchFormValues {
+  keyword: string;
+  dateFrom: string;
+  dateTo: string;
+  dateType: DateType;
+  statuses: Status[];
+  categories: Category[];
+}
 
-/**
- * nuqsとreact-hook-formを統合するカスタムフック
- *
- * - URLの状態をreact-hook-formの初期値として使用
- * - フォームの変更をURLに同期（個別フィールドのonChangeで更新）
- * - 既存のFormField, FormControlコンポーネントがそのまま使える
- *
- * ※ useWatchは全フィールドを監視するため負荷が高い
- *   代わりに個別のonChangeハンドラーでURLを更新する
- */
-export const useSearchForm = () => {
-  // 1. nuqsでURL状態を管理
-  const { filters, setFilter } = useFilters(searchFilterSchema);
-  const { keyword, dateFrom, dateTo, dateType, statuses, categories } = filters;
-
-  // 2. デフォルト値を計算（URL未設定時のフォールバック）
-  const defaultValues = useMemo<SearchFormValues>(
-    () => ({
-      keyword: keyword ?? "",
-      dateFrom: dateFrom ?? getDefaultDateFrom(),
-      dateTo: dateTo ?? getDefaultDateTo(),
-      dateType: dateType ?? "CREATED_DATE",
-      statuses: statuses.length > 0 ? statuses : [...STATUSES],
-      categories: categories.length > 0 ? categories : [...CATEGORIES],
-    }),
-    // 初期レンダリング時のみ使用するため、依存配列は空
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
-  // 3. react-hook-formを初期化（URLからの値を初期値として使用）
-  const form = useForm<SearchFormValues>({
-    defaultValues,
-  });
-
-  // 4. URLからフォームを再同期（ブラウザの戻る/進むボタン対応）
-  useEffect(() => {
-    const handlePopState = () => {
-      form.reset({
-        keyword: keyword ?? "",
-        dateFrom: dateFrom ?? getDefaultDateFrom(),
-        dateTo: dateTo ?? getDefaultDateTo(),
-        dateType: dateType ?? "CREATED_DATE",
-        statuses: statuses.length > 0 ? statuses : [...STATUSES],
-        categories: categories.length > 0 ? categories : [...CATEGORIES],
-      });
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [keyword, dateFrom, dateTo, dateType, statuses, categories, form]);
-
-  // 5. フィールドごとのURL同期ハンドラー
-  const updateKeyword = useCallback(
-    (value: string) => {
-      setFilter("keyword", value || null);
-    },
-    [setFilter],
-  );
-
-  const updateDateFrom = useCallback(
-    (value: string) => {
-      setFilter("dateFrom", value || null);
-    },
-    [setFilter],
-  );
-
-  const updateDateTo = useCallback(
-    (value: string) => {
-      setFilter("dateTo", value || null);
-    },
-    [setFilter],
-  );
-
-  const updateDateType = useCallback(
-    (value: DateType) => {
-      setFilter("dateType", value);
-    },
-    [setFilter],
-  );
-
-  const updateStatuses = useCallback(
-    (value: Status[]) => {
-      setFilter("statuses", value);
-    },
-    [setFilter],
-  );
-
-  const updateCategories = useCallback(
-    (value: Category[]) => {
-      setFilter("categories", value);
-    },
-    [setFilter],
-  );
-
-  // 6. フィルターをクリア
-  const clearFilters = useCallback(() => {
-    const resetValues: SearchFormValues = {
-      keyword: "",
-      dateFrom: getDefaultDateFrom(),
-      dateTo: getDefaultDateTo(),
-      dateType: "CREATED_DATE",
-      statuses: [...STATUSES],
-      categories: [...CATEGORIES],
-    };
-    form.reset(resetValues);
-
-    // URLもクリア
-    setFilter("keyword", null);
-    setFilter("dateFrom", resetValues.dateFrom);
-    setFilter("dateTo", resetValues.dateTo);
-    setFilter("dateType", "CREATED_DATE");
-    setFilter("statuses", [...STATUSES]);
-    setFilter("categories", [...CATEGORIES]);
-  }, [form, setFilter]);
-
-  return {
-    form,
-    control: form.control,
-    // 個別のURL更新関数
-    updateKeyword,
-    updateDateFrom,
-    updateDateTo,
-    updateDateType,
-    updateStatuses,
-    updateCategories,
-    clearFilters,
-  };
-};
+// デフォルト値
+const getDefaultValues = (): SearchFormValues => ({
+  keyword: "",
+  dateFrom: getDefaultDateFrom(),
+  dateTo: getDefaultDateTo(),
+  dateType: "CREATED_DATE",
+  statuses: [...STATUSES],
+  categories: [...CATEGORIES],
+});
 
 // ヘルパー関数
 const getDefaultDateFrom = (): string => {
@@ -191,46 +153,23 @@ const getDefaultDateTo = (): string => {
   return new Date().toISOString().split("T")[0]!;
 };
 
+/**
+ * useUrlFormを使った検索フォーム用フック
+ */
+export const useSearchForm = () => {
+  return useUrlForm(searchFilterSchema, getDefaultValues());
+};
+
 // =============================================================================
-// 4. 使用例
+// 3. 使用例コンポーネント
 // =============================================================================
 
 /**
- * react-hook-form + URL同期の実装例
- *
- * 既存のフォームコンポーネントを少し修正するだけで、
- * URL同期機能を追加できる
+ * useUrlFormを使った検索フォームの実装例
  */
 export const SearchPageWithForm = () => {
-  const {
-    form,
-    updateKeyword,
-    updateDateFrom,
-    updateDateTo,
-    updateDateType,
-    updateStatuses,
-    updateCategories,
-    clearFilters,
-  } = useSearchForm();
-
-  // チェックボックスのトグル処理
-  const toggleStatus = (status: Status, checked: boolean) => {
-    const current = form.getValues("statuses");
-    const newValues = checked
-      ? [...current, status]
-      : current.filter((s) => s !== status);
-    form.setValue("statuses", newValues);
-    updateStatuses(newValues);
-  };
-
-  const toggleCategory = (category: Category, checked: boolean) => {
-    const current = form.getValues("categories");
-    const newValues = checked
-      ? [...current, category]
-      : current.filter((c) => c !== category);
-    form.setValue("categories", newValues);
-    updateCategories(newValues);
-  };
+  const { form, search, clearFilters } = useSearchForm();
+  const { control, watch } = form;
 
   return (
     <div className="space-y-6 p-4">
@@ -238,123 +177,154 @@ export const SearchPageWithForm = () => {
         検索フォーム（react-hook-form + URL同期）
       </h1>
 
-      <form className="space-y-4 rounded-lg border p-4">
+      <form onSubmit={search} className="space-y-4 rounded-lg border p-4">
         {/* キーワード検索 */}
-        <div>
-          <label className="block font-bold">キーワード</label>
-          <input
-            type="text"
-            value={form.watch("keyword")}
-            onChange={(e) => {
-              form.setValue("keyword", e.target.value);
-              updateKeyword(e.target.value);
-            }}
-            placeholder="検索キーワード"
-            className="w-64 rounded border p-2"
-          />
-        </div>
+        <Controller
+          name="keyword"
+          control={control}
+          render={({ field }) => (
+            <div>
+              <label className="block font-bold">キーワード</label>
+              <input
+                type="text"
+                {...field}
+                placeholder="検索キーワード"
+                className="w-64 rounded border p-2"
+              />
+            </div>
+          )}
+        />
 
         {/* 日付範囲 */}
         <div className="flex gap-4">
-          <div>
-            <label className="block font-bold">開始日</label>
-            <input
-              type="date"
-              value={form.watch("dateFrom")}
-              onChange={(e) => {
-                form.setValue("dateFrom", e.target.value);
-                updateDateFrom(e.target.value);
-              }}
-              className="rounded border p-2"
-            />
-          </div>
-          <div>
-            <label className="block font-bold">終了日</label>
-            <input
-              type="date"
-              value={form.watch("dateTo")}
-              onChange={(e) => {
-                form.setValue("dateTo", e.target.value);
-                updateDateTo(e.target.value);
-              }}
-              className="rounded border p-2"
-            />
-          </div>
+          <Controller
+            name="dateFrom"
+            control={control}
+            render={({ field }) => (
+              <div>
+                <label className="block font-bold">開始日</label>
+                <input type="date" {...field} className="rounded border p-2" />
+              </div>
+            )}
+          />
+          <Controller
+            name="dateTo"
+            control={control}
+            render={({ field }) => (
+              <div>
+                <label className="block font-bold">終了日</label>
+                <input type="date" {...field} className="rounded border p-2" />
+              </div>
+            )}
+          />
         </div>
 
         {/* 日付タイプ - ラジオボタン */}
-        <div>
-          <label className="block font-bold">日付タイプ</label>
-          <div className="flex gap-4">
-            {DATE_TYPES.map((type) => (
-              <label key={type} className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  value={type}
-                  checked={form.watch("dateType") === type}
-                  onChange={() => {
-                    form.setValue("dateType", type);
-                    updateDateType(type);
-                  }}
-                />
-                {type === "CREATED_DATE" ? "作成日" : "更新日"}
-              </label>
-            ))}
-          </div>
-        </div>
+        <Controller
+          name="dateType"
+          control={control}
+          render={({ field }) => (
+            <div>
+              <label className="block font-bold">日付タイプ</label>
+              <div className="flex gap-4">
+                {DATE_TYPES.map((type) => (
+                  <label key={type} className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      value={type}
+                      checked={field.value === type}
+                      onChange={() => field.onChange(type)}
+                    />
+                    {type === "CREATED_DATE" ? "作成日" : "更新日"}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        />
 
         {/* ステータス - チェックボックス */}
-        <div>
-          <label className="block font-bold">ステータス</label>
-          <div className="flex gap-4">
-            {STATUSES.map((status) => (
-              <label key={status} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.watch("statuses").includes(status)}
-                  onChange={(e) => toggleStatus(status, e.target.checked)}
-                />
-                {status}
-              </label>
-            ))}
-          </div>
-        </div>
+        <Controller
+          name="statuses"
+          control={control}
+          render={({ field }) => (
+            <div>
+              <label className="block font-bold">ステータス</label>
+              <div className="flex gap-4">
+                {STATUSES.map((status) => (
+                  <label key={status} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={field.value.includes(status)}
+                      onChange={(e) => {
+                        const newValue = e.target.checked
+                          ? [...field.value, status]
+                          : field.value.filter((s) => s !== status);
+                        field.onChange(newValue);
+                      }}
+                    />
+                    {status}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        />
 
         {/* カテゴリ - チェックボックス */}
-        <div>
-          <label className="block font-bold">カテゴリ</label>
-          <div className="flex gap-4">
-            {CATEGORIES.map((category) => (
-              <label key={category} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.watch("categories").includes(category)}
-                  onChange={(e) => toggleCategory(category, e.target.checked)}
-                />
-                {category}
-              </label>
-            ))}
-          </div>
-        </div>
+        <Controller
+          name="categories"
+          control={control}
+          render={({ field }) => (
+            <div>
+              <label className="block font-bold">カテゴリ</label>
+              <div className="flex gap-4">
+                {CATEGORIES.map((category) => (
+                  <label key={category} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={field.value.includes(category)}
+                      onChange={(e) => {
+                        const newValue = e.target.checked
+                          ? [...field.value, category]
+                          : field.value.filter((c) => c !== category);
+                        field.onChange(newValue);
+                      }}
+                    />
+                    {category}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        />
 
-        {/* クリアボタン */}
-        <button
-          type="button"
-          onClick={clearFilters}
-          className="rounded bg-gray-200 px-4 py-2 hover:bg-gray-300"
-        >
-          フィルターをクリア
-        </button>
+        {/* ボタン */}
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            className="rounded bg-blue-500 px-4 py-2 text-white hover:bg-blue-600"
+          >
+            検索
+          </button>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="rounded bg-gray-200 px-4 py-2 hover:bg-gray-300"
+          >
+            クリア
+          </button>
+        </div>
       </form>
 
       {/* 現在の状態表示 */}
       <div className="rounded-lg bg-gray-100 p-4">
-        <h2 className="font-bold">現在のフォーム状態（URLに同期）</h2>
+        <h2 className="font-bold">現在のフォーム状態</h2>
         <pre className="mt-2 overflow-auto rounded bg-white p-2 text-sm">
-          {JSON.stringify(form.watch(), null, 2)}
+          {JSON.stringify(watch(), null, 2)}
         </pre>
         <p className="mt-2 text-sm text-gray-600">
-          ※ フォームを変更すると即座にURLが更新されます
+          ※ 検索ボタンを押すとURLが更新され、共有可能になります
         </p>
       </div>
     </div>
@@ -362,28 +332,43 @@ export const SearchPageWithForm = () => {
 };
 
 // =============================================================================
-// 5. 既存フォームとの統合例
+// 4. 使い方ドキュメント
 // =============================================================================
 
 /**
- * 既存のreact-hook-formを使ったフォームにURL同期を追加する場合
+ * useUrlFormの使い方
  *
- * Before:
+ * 1. スキーマとデフォルト値を定義:
  * ```tsx
- * const form = useForm<FormSchema>({
- *   defaultValues: initialValues,
- * })
+ * const schema = {
+ *   keyword: { type: "string" },
+ *   status: { type: "stringLiteral", options: ["ACTIVE", "INACTIVE"] },
+ * } as const satisfies FilterSchema;
+ *
+ * const defaultValues = { keyword: "", status: "ACTIVE" };
  * ```
  *
- * After:
+ * 2. useUrlFormを使用:
  * ```tsx
- * const { form, control, updateXxx } = useSearchForm()
- * // 既存のFormField, FormControlはcontrolをそのまま渡せばOK
- * // onChangeでupdateXxxを呼び出してURLを更新
+ * const { form, search, clearFilters } = useUrlForm(schema, defaultValues);
  * ```
  *
- * 変更点:
- * 1. useForm → useSearchForm に置き換え
- * 2. 各フィールドのonChangeでURL更新関数を呼び出し
- * 3. 残りのUIコードはそのまま使える
+ * 3. フォームを実装:
+ * ```tsx
+ * <form onSubmit={search}>
+ *   <Controller
+ *     name="keyword"
+ *     control={form.control}
+ *     render={({ field }) => <Input {...field} />}
+ *   />
+ *   <button type="submit">検索</button>
+ *   <button type="button" onClick={clearFilters}>クリア</button>
+ * </form>
+ * ```
+ *
+ * 特徴:
+ * - スキーマとデフォルト値を渡すだけで使える
+ * - フォームの型は自動推論される
+ * - 空文字列は自動的にURLから削除される
+ * - URLを共有すれば同じ条件で検索可能
  */

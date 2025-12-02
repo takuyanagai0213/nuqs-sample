@@ -60,7 +60,7 @@ type InferValue<T extends ParserType> = T extends { type: 'string' }
             : never
 
 // スキーマから全体の状態型を推論
-type InferState<S extends FilterSchema> = {
+export type InferState<S extends FilterSchema> = {
   [K in keyof S]: InferValue<S[K]>
 }
 
